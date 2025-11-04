@@ -1,21 +1,53 @@
 package main
 
 import (
-  "fmt"
+	"log"
+	"time"
+
+	"golang.org/x/time/rate"
 )
 
-//TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
+const (
+	asanaBaseURL = "https://app.asana.com/api/1.0"
+	workspaceGid = "1211834271836941"
+	// !! WARNING: Do not hardcode tokens in production code.
+	// This should be loaded from environment variables or a secure vault.
+	bearerToken = "2/1211834271836929/1211834383480110:098090c664d79859c951ba6858d531f3"
+	// --- New Configuration for Saving ---
+	dataFolderName = "extracted-asana-data"
+	dataFileName   = "asana_data.json"
+
+	maxRetries = 3 // Maximum number of retries for a single request
+)
+
+// Asana's standard plan limit is 150 requests/minute.
+var asanaLimiter = rate.NewLimiter(rate.Every(time.Minute/150), 10)
 
 func main() {
-  //TIP <p>Press <shortcut actionId="ShowIntentionActions"/> when your caret is at the underlined text
-  // to see how GoLand suggests fixing the warning.</p><p>Alternatively, if available, click the lightbulb to view possible fixes.</p>
-  s := "gopher"
-  fmt.Printf("Hello and welcome, %s!\n", s)
 
-  for i := 1; i <= 5; i++ {
-	//TIP <p>To start your debugging session, right-click your code in the editor and select the Debug option.</p> <p>We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-	// for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.</p>
-	fmt.Println("i =", 100/i)
-  }
+	// TODO
+	/*
+			Get projects
+			1. curl "https://app.asana.com/api/1.0/workspaces/1211834271836941/projects" \
+			     -H "Authorization: Bearer 2/1211834271836929/1211834383480110:098090c664d79859c951ba6858d531f3"
+
+			For each project loop through:
+			2. curl "https://app.asana.com/api/1.0/memberships?parent=1211834226422815" \
+		     -H "Authorization: Bearer 2/1211834271836929/1211834383480110:098090c664d79859c951ba6858d531f3"
+
+			I need a basic version that extract the data and saves it
+			1. Http handler(basic without limits, expand later)
+			2. Separate function that will create a map users -> projects, ot maybe just do in one function??? lets see
+			3. Function that will save the data in json format in a file
+			4. Write them into a file in json format
+	*/
+
+	associatedUsers, err := getAssociatedAsanaUsers()
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = saveDataToFile(associatedUsers)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
