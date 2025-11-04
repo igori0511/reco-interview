@@ -1,7 +1,12 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -20,34 +25,53 @@ const (
 	maxRetries = 3 // Maximum number of retries for a single request
 )
 
+var extractFn = extractAsanaUsers
+
 // Asana's standard plan limit is 150 requests/minute.
 var asanaLimiter = rate.NewLimiter(rate.Every(time.Minute/150), 10)
 
 func main() {
+	intervalSec := flag.Int("interval", 5, "allowed: 5 (seconds) or 1800 (30 minutes)")
+	flag.Parse()
 
-	// TODO
-	/*
-			Get projects
-			1. curl "https://app.asana.com/api/1.0/workspaces/1211834271836941/projects" \
-			     -H "Authorization: Bearer 2/1211834271836929/1211834383480110:098090c664d79859c951ba6858d531f3"
+	if *intervalSec != 5 && *intervalSec != 1800 {
+		log.Fatalf("invalid -interval=%d (allowed: 5 or 1800)", *intervalSec)
+	}
+	interval := time.Duration(*intervalSec) * time.Second
 
-			For each project loop through:
-			2. curl "https://app.asana.com/api/1.0/memberships?parent=1211834226422815" \
-		     -H "Authorization: Bearer 2/1211834271836929/1211834383480110:098090c664d79859c951ba6858d531f3"
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
-			I need a basic version that extract the data and saves it
-			1. Http handler(basic without limits, expand later)
-			2. Separate function that will create a map users -> projects, ot maybe just do in one function??? lets see
-			3. Function that will save the data in json format in a file
-			4. Write them into a file in json format
-	*/
+	// run once immediately
+	if err := extractFn(ctx); err != nil {
+		log.Printf("extractAsanaUsers (initial): %v", err)
+	}
 
-	associatedUsers, err := getAssociatedAsanaUsers()
+	timer := time.NewTicker(interval)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("shutting down")
+			return
+		case <-timer.C:
+			if err := extractFn(ctx); err != nil {
+				log.Printf("extractAsanaUsers: %v", err)
+			}
+		}
+	}
+}
+
+// TODO structure it a bit better since we can use interfaces and structs.
+func extractAsanaUsers(ctx context.Context) error {
+	associatedUsers, err := getAssociatedAsanaUsers(ctx)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	err = saveDataToFile(associatedUsers)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+	return nil
 }

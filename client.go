@@ -28,27 +28,23 @@ type MembershipsResponse struct {
 	} `json:"data"`
 }
 
-func makeAsanaRequest(url string) ([]byte, error) {
+func makeAsanaRequest(ctx context.Context, url string) ([]byte, error) {
 	// Create a new HTTP client with a 10-second timeout.
 	client := &http.Client{Timeout: 10 * time.Second}
-	ctx := context.Background() // Context for the limiter
 
+	//TODO add exponential backoff functionality for better retry handling
 	for i := 0; i < maxRetries; i++ {
-		// --- NEW: Proactive Rate Limiting ---
 		// Wait for the token bucket limiter to allow this request.
 		// This will block if we are sending requests too quickly.
 		if err := asanaLimiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("rate limiter error: %w", err)
 		}
-		// --- End New Section ---
 
 		// Create a new GET request.
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create new request: %w", err)
 		}
-
-		// Add the required Asana headers.
 		req.Header.Set("Authorization", "Bearer "+bearerToken)
 		req.Header.Set("Accept", "application/json")
 
@@ -57,8 +53,6 @@ func makeAsanaRequest(url string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to send request: %w", err)
 		}
-
-		// --- Handle Response ---
 
 		switch resp.StatusCode {
 		case http.StatusOK: // 200 OK
@@ -71,7 +65,6 @@ func makeAsanaRequest(url string) ([]byte, error) {
 			return body, nil
 
 		case http.StatusTooManyRequests: // 429 Rate Limit
-			// Rate limit hit. We must read the Retry-After header.
 			retryAfterHeader := resp.Header.Get("Retry-After")
 			resp.Body.Close()
 
@@ -91,7 +84,6 @@ func makeAsanaRequest(url string) ([]byte, error) {
 
 			// Sleep for the required duration
 			time.Sleep(waitDuration)
-			// Loop will continue to retry the request
 
 		default:
 			// Any other error (401, 403, 404, 500, etc.) is a hard failure.
@@ -106,12 +98,11 @@ func makeAsanaRequest(url string) ([]byte, error) {
 }
 
 // getProjects fetches all projects for the configured workspace.
-func getProjects() (ProjectsResponse, error) {
+func getProjects(ctx context.Context) (ProjectsResponse, error) {
 	url := fmt.Sprintf("%s/workspaces/%s/projects", asanaBaseURL, workspaceGid)
 	var projects ProjectsResponse
 
-	fmt.Printf("Fetching projects from: %s\n", url)
-	body, err := makeAsanaRequest(url)
+	body, err := makeAsanaRequest(ctx, url)
 	if err != nil {
 		return projects, err
 	}
@@ -124,13 +115,16 @@ func getProjects() (ProjectsResponse, error) {
 	return projects, nil
 }
 
+/* TODO this can be done in parallel in respect to limits of asana api
+ so the usage of multiple goroutines can be leveraged, for each project make a requests and limit the concurrency with channels.
+this will speed up the process tremendously
+*/
 // getProjectMembers fetches all members for a single given project GID.
-func getProjectMembers(projectGid string) (MembershipsResponse, error) {
+func getProjectMembers(ctx context.Context, projectGid string) (MembershipsResponse, error) {
 	url := fmt.Sprintf("%s/memberships?parent=%s", asanaBaseURL, projectGid)
 	var memberships MembershipsResponse
 
-	fmt.Printf("  - Fetching members for project GID: %s\n", projectGid)
-	body, err := makeAsanaRequest(url)
+	body, err := makeAsanaRequest(ctx, url)
 	if err != nil {
 		return memberships, err
 	}
